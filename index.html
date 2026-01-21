@@ -40,7 +40,7 @@
             --text-muted: #a0a0a0;
             --border-color: #333333;
 
-            /* Diff Highlights (Dark) - Darker backgrounds, brighter text */
+            /* Diff Highlights (Dark) */
             --highlight-add-bg: #1e3a1e; 
             --highlight-add-text: #76ff76;
             --highlight-rem-bg: #3a1e1e;
@@ -138,11 +138,24 @@
             flex-direction: column;
         }
 
+        .input-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+        }
+
         label {
             font-weight: 600;
-            margin-bottom: 8px;
             font-size: 0.9rem;
             color: var(--text-muted);
+        }
+
+        .counter {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            opacity: 0.8;
+            font-variant-numeric: tabular-nums;
         }
 
         textarea {
@@ -185,17 +198,58 @@
         }
 
         /* Diff Styling */
+        span.diff-item {
+            border-radius: 2px;
+            position: relative;
+        }
+        
+        span.diff-clickable {
+            cursor: pointer;
+        }
+
+        span.diff-no-action {
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        
+        /* Visual cue on hover */
+        span.diff-clickable:hover {
+            filter: brightness(0.9);
+            box-shadow: 0 0 2px rgba(0,0,0,0.2);
+        }
+
+        span.diff-clickable:hover::after {
+            content: attr(data-action);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 10;
+        }
+
         span.added {
             background-color: var(--highlight-add-bg);
             color: var(--highlight-add-text);
-            border-radius: 2px;
         }
 
         span.removed {
             background-color: var(--highlight-rem-bg);
             color: var(--highlight-rem-text);
             text-decoration: line-through;
-            border-radius: 2px;
+        }
+
+        .hint {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+            text-align: right;
         }
 
         /* Mobile Responsive */
@@ -238,11 +292,17 @@
     <div class="container">
         <div class="input-group">
             <div class="input-box">
-                <label for="original">Original Text</label>
+                <div class="input-header">
+                    <label for="original">Original Text</label>
+                    <span id="original-count" class="counter">0 words, 0 chars</span>
+                </div>
                 <textarea id="original" placeholder="Paste original text here...">The quick brown fox jumps over the lazy dog.</textarea>
             </div>
             <div class="input-box">
-                <label for="modified">Modified Text</label>
+                <div class="input-header">
+                    <label for="modified">Modified Text</label>
+                    <span id="modified-count" class="counter">0 words, 0 chars</span>
+                </div>
                 <textarea id="modified" placeholder="Paste modified text here...">The quick red fox jumped over the lazy dog.</textarea>
             </div>
         </div>
@@ -250,14 +310,18 @@
         <div class="output-group">
             <label>Comparison Result</label>
             <div id="result"></div>
+            <div class="hint">Green: Click to Accept | Solo Red: Click to Reject Deletion</div>
         </div>
     </div>
 
     <script>
         // --- State Management ---
         let currentMode = 'word';
+        let currentDiffData = []; 
         const originalEl = document.getElementById('original');
         const modifiedEl = document.getElementById('modified');
+        const originalCountEl = document.getElementById('original-count');
+        const modifiedCountEl = document.getElementById('modified-count');
         const resultEl = document.getElementById('result');
         const btnWord = document.getElementById('btn-word');
         const btnChar = document.getElementById('btn-char');
@@ -267,8 +331,6 @@
         function toggleTheme() {
             const body = document.body;
             body.classList.toggle('dark-mode');
-            
-            // Save preference
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             updateThemeIcon(isDark);
@@ -278,7 +340,6 @@
             themeToggle.innerText = isDark ? '☀️' : '🌙';
         }
 
-        // Load saved theme on startup
         const savedTheme = localStorage.getItem('theme');
         if (savedTheme === 'dark') {
             document.body.classList.add('dark-mode');
@@ -287,7 +348,7 @@
             updateThemeIcon(false);
         }
 
-        // --- Diff Logic ---
+        // --- Diff & Counter Logic ---
         function setMode(mode) {
             currentMode = mode;
             if(mode === 'word') {
@@ -300,31 +361,54 @@
             compareText();
         }
 
+        function getCounts(text) {
+            const chars = text.length;
+            const words = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+            return `${words} words, ${chars} chars`;
+        }
+
         function compareText() {
             const originalText = originalEl.value;
             const modifiedText = modifiedEl.value;
-            let diff;
 
+            // Update Counters
+            originalCountEl.innerText = getCounts(originalText);
+            modifiedCountEl.innerText = getCounts(modifiedText);
+
+            // Calculate Diff
             if (currentMode === 'word') {
-                diff = Diff.diffWords(originalText, modifiedText);
+                currentDiffData = Diff.diffWords(originalText, modifiedText);
             } else {
-                diff = Diff.diffChars(originalText, modifiedText);
+                currentDiffData = Diff.diffChars(originalText, modifiedText);
             }
 
             const fragment = document.createDocumentFragment();
 
-            diff.forEach((part) => {
+            currentDiffData.forEach((part, index) => {
                 const span = document.createElement('span');
+                span.innerText = part.value;
+                span.classList.add('diff-item');
                 
                 if (part.added) {
-                    span.classList.add('added');
-                    span.innerText = part.value;
+                    span.classList.add('added', 'diff-clickable');
+                    span.onclick = () => resolveDiff(index);
+                    span.setAttribute('data-action', 'Accept Change');
                 } else if (part.removed) {
                     span.classList.add('removed');
-                    span.innerText = part.value;
-                } else {
-                    span.innerText = part.value;
+                    
+                    // Check if this is a "replacement" (associated with next part)
+                    const isReplacement = (index + 1 < currentDiffData.length && currentDiffData[index+1].added);
+
+                    if (isReplacement) {
+                        span.classList.add('diff-no-action');
+                        span.title = "Click the green text to accept replacement";
+                    } else {
+                        span.classList.add('diff-clickable');
+                        span.onclick = () => resolveDiff(index);
+                        span.setAttribute('data-action', 'Reject Deletion');
+                    }
                 }
+                
                 fragment.appendChild(span);
             });
 
@@ -332,11 +416,67 @@
             resultEl.appendChild(fragment);
         }
 
+        // --- Resolution Logic ---
+        function resolveDiff(clickedIndex) {
+            const diff = currentDiffData;
+            const clickedPart = diff[clickedIndex];
+            let newOriginal = "";
+            let newModified = "";
+
+            // If Red and Associated with Green (Replacement context), do nothing
+            // (The UI handles this by removing the click listener, but safety check here)
+            if (clickedPart.removed && clickedIndex + 1 < diff.length && diff[clickedIndex + 1].added) {
+                return;
+            }
+
+            // Reconstruct the texts based on user action
+            for (let i = 0; i < diff.length; i++) {
+                const part = diff[i];
+
+                if (clickedPart.added && i === clickedIndex) {
+                    // ACTION: ACCEPT GREEN
+                    // Logic: Update Original to match Modified (Keep the new text in both)
+                    newModified += part.value; 
+                    newOriginal += part.value; 
+
+                } else if (clickedPart.added && i === clickedIndex - 1 && part.removed) {
+                    // ACTION: HANDLING ASSOCIATED RED (Preceding the clicked Green)
+                    // Logic: Normally Red is in Original but not Modified.
+                    // To "Accept" the replacement, we effectively DELETE it from Original too.
+                    // So we do NOT add it to newOriginal.
+                    // (And we don't add to newModified because it's removed there anyway).
+
+                } else if (clickedPart.removed && i === clickedIndex) {
+                    // ACTION: REJECT SOLO RED
+                    // Logic: It was deleted in Modified. User wants it back.
+                    // Add to Original (it was already there) AND add back to Modified.
+                    newOriginal += part.value;
+                    newModified += part.value;
+
+                } else {
+                    // STANDARD RECONSTRUCTION FOR NON-CLICKED PARTS
+                    if (part.added) {
+                        newModified += part.value; // Exists in Mod, not Orig
+                    } else if (part.removed) {
+                        newOriginal += part.value; // Exists in Orig, not Mod
+                    } else {
+                        // Common text
+                        newOriginal += part.value;
+                        newModified += part.value;
+                    }
+                }
+            }
+
+            // Apply updates
+            originalEl.value = newOriginal;
+            modifiedEl.value = newModified;
+            compareText();
+        }
+
         // --- Event Listeners ---
         originalEl.addEventListener('input', compareText);
         modifiedEl.addEventListener('input', compareText);
 
-        // Run once on load
         window.onload = compareText;
 
     </script>
